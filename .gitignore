@@ -3,3 +3,6 @@ terraform.tfstate
 !/ssh/
 /ssh/*
 !/ssh/.gitkeep
+!/ansible/inventories/
+/ansible/inventories/*
+!/ansible/inventories/..gitkeep
