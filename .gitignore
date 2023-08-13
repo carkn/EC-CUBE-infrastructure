@@ -1,4 +1,2 @@
-ssh/
 .terraform*
 terraform.tfstate
-inventories/
