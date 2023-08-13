@@ -1,0 +1,276 @@
+- hosts: all
+
+  vars_files:
+    - ./config.yml
+  
+  tasks:
+
+    - name: set locale
+      become: true
+      command: localectl set-locale LC_CTYPE=ja_JP.utf8
+    
+    - name: install tools and services
+      become: true
+      apt:
+        name:
+          - wget
+          - apache2
+          - software-properties-common
+          - ca-certificates
+        state: present
+    
+    - name: add apt repository
+      become: true
+      ansible.builtin.apt_repository:
+        repo: ppa:ondrej/php
+    
+    - name: apt update
+      become: true
+      apt:
+        update_cache: yes
+
+    - name: install php
+      become: true
+      apt:
+        name:
+          - php{{ php.version }}
+          - php{{ php.version }}-mbstring
+          - php{{ php.version }}-curl
+          - php{{ php.version }}-pgsql
+          - php{{ php.version }}-mysql
+          - php{{ php.version }}-sqlite3
+          - php{{ php.version }}-xml
+          - php{{ php.version }}-zip
+          - php{{ php.version }}-intl
+          - php{{ php.version }}-gd
+          - php{{ php.version }}-opcache
+          - php{{ php.version }}-apcu
+          - libpng-dev
+          - libjpeg-dev
+          - libfreetype-dev
+        state: present
+    
+    - name: check php.ini.org
+      stat:
+        path: /etc/php/{{ php.version }}/apache2/php.ini.org
+      register: php_ini_org
+
+    - name: copy php.ini
+      become: true
+      command:
+        chdir: /home/administrator
+        cmd: "sudo cp -p /etc/php/{{ php.version }}/apache2/php.ini /etc/php/{{ php.version }}/apache2/php.ini.org"
+      when: not php_ini_org.stat.exists
+
+    - name: setup php.ini
+      become: true
+      lineinfile:
+        path: "/etc/php/{{ php.version }}/apache2/php.ini"
+        regexp: '^;date.timezone ='
+        line: 'date.timezone = Asia/Tokyo'
+    
+    - name: check apache.conf.org
+      stat:
+        path: /etc/apache2/apache2.conf.org
+      register: apache_conf_org
+
+    - name: copy apache.conf
+      become: true
+      command:
+        chdir: /home/administrator
+        cmd: 'sudo cp -p /etc/apache2/apache2.conf /etc/apache2/apache2.conf.org'
+      when: not apache_conf_org.stat.exists
+
+    - name: setup apache.conf
+      become: true
+      shell:
+        cmd: |
+          sudo cat >> /etc/apache2/apache2.conf <<EOF
+          <Directory /var/www/html/ec-cube>
+            AllowOverride All
+            Require all granted
+          </Directory>
+          EOF
+      args:
+        executable: /bin/bash
+      when: not apache_conf_org.stat.exists
+    
+    - name: enable mod_rewrite
+      become: true
+      command:
+        chdir: /home/administrator
+        cmd: 'sudo a2enmod rewrite'
+    
+    - name: restart apache
+      become: true
+      ansible.builtin.systemd:
+        name: apache2.service
+        state: restarted
+    
+    - name: install mysql
+      become: true
+      apt:
+        name:
+          - mysql-server{{ db.version }}
+          - mysql-client{{ db.version }}
+          - python3-mysqldb
+      when: "'mysql' == (db.type)"
+
+    - name: mysql setup root
+      become: true
+      mysql_user:
+        login_user: root
+        login_password: "{{ db.root_password }}"
+        name: root
+        password: "{{ db.root_password }}"
+        check_implicit_admin: yes
+        state: present
+      when: "'mysql' == (db.type)"
+
+    - name: mysql delete anonymous
+      mysql_user:
+        login_user: root
+        login_password: "{{ db.root_password }}"
+        name: ''
+        host_all: yes
+        state: absent
+      when: "'mysql' == (db.type)"
+
+    - name: mysql create database
+      mysql_db:
+        login_user: root
+        login_password: "{{ db.root_password }}"
+        name: "{{ db.name }}"
+        state: present
+        encoding: utf8mb4
+      when: "'mysql' == (db.type)"
+
+    - name: mysql add user
+      mysql_user:
+        login_user: root
+        login_password: "{{ db.root_password }}"
+        name: "{{ db.user }}"
+        password: "{{ db.user_password }}"
+        priv: "{{ db.user }}.*:ALL"
+        state: present
+      when: "'mysql' == (db.type)"
+    
+    - name: add postgresql apt repository
+      become: true
+      shell: echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+      when: "'postgresql' == (db.type)"
+    
+    - name: add postgresql apt key
+      become: true
+      apt_key:
+        url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        state: present
+      when: "'postgresql' == (db.type)"
+
+    - name: apt update
+      become: true
+      apt:
+        update_cache: yes
+      when: "'postgresql' == (db.type)"
+
+    - name: install postgresql
+      become: true
+      apt:
+        name:
+          - postgresql-{{ db.version }}
+          - python3-postgresql
+          - python3-pip
+      when: "'postgresql' == (db.type)"
+    
+    - name: install psycopg2
+      become: true
+      pip:
+        name: psycopg2-binary
+      when: "'postgresql' == (db.type)"
+
+    - name: postgresql check pg_hba.conf
+      stat:
+        path: /etc/postgresql/{{ db.version }}/main/pg_hba.conf.org
+      register: pg_hba_conf
+      when: "'postgresql' == (db.type)"
+
+    - name: create postgresql cluster
+      become: true
+      shell: pg_createcluster {{ db.version }} main --start
+      when: "'postgresql' == (db.type) and not pg_hba_conf.stat.exists"
+
+    - name: postgresql copy pg_hba.conf
+      become: true
+      command:
+        chdir: /home/administrator
+        cmd: 'sudo cp -p /etc/postgresql/{{ db.version }}/main/pg_hba.conf /etc/postgresql/{{ db.version }}/main/pg_hba.conf.org'
+      when: "'postgresql' == (db.type) and not pg_hba_conf.stat.exists"
+
+    - name: postgresql setup pg_hba.conf
+      become: true
+      shell:
+        cmd: |
+          sudo cat >> /etc/postgresql/{{ db.version }}/main/pg_hba.conf <<EOF
+          local all all trust
+          host all all 0.0.0.0/0 md5
+          EOF
+      args:
+        executable: /bin/bash
+      when: "'postgresql' == (db.type) and not pg_hba_conf.stat.exists"
+    
+    - name: postgresql create database
+      become: true
+      become_user: postgres
+      postgresql_db:
+        name: "{{ db.name }}"
+        encoding: utf8
+        state: present
+      when: "'postgresql' == (db.type)"
+    
+    - name: postgresql create user role
+      become: true
+      become_user: postgres
+      postgresql_user:
+        name: "{{ db.user }}"
+        password: "{{ db.user_password }}"
+        state: present
+      when: "'postgresql' == (db.type)"
+    
+    - name: postgresql grant all privileges on database to user
+      become: true
+      become_user: postgres
+      postgresql_privs:
+        db: "{{ db.name }}"
+        privs: ALL
+        type: database
+        role: "{{ db.user }}"
+        state: present
+      when: "'postgresql' == (db.type)"
+
+    - name: check ec-cube.tar.gz
+      stat:
+        path: /home/administrator/eccube.tar.gz
+      register: eccube_tar_gz
+
+    - name: dwonload ec-cube
+      ansible.builtin.get_url:
+        dest: /home/administrator/eccube.tar.gz
+        url: https://downloads.ec-cube.net/src/eccube-{{ eccube.version }}.tar.gz
+      when: not eccube_tar_gz.stat.exists
+
+    - name: unarchive ec-cube
+      become: true
+      command:
+        chdir: /home/administrator
+        cmd: 'tar zxvf /home/administrator/eccube.tar.gz -C /var/www/html'
+      when: not eccube_tar_gz.stat.exists
+
+    - name: change owner
+      become: true
+      file:
+        path: /var/www/html
+        state: directory
+        owner: www-data
+        group: www-data
+        recurse: yes
+      when: not eccube_tar_gz.stat.exists
