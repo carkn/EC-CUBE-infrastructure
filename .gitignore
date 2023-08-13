@@ -5,4 +5,4 @@ terraform.tfstate
 !/ssh/.gitkeep
 !/ansible/inventories/
 /ansible/inventories/*
-!/ansible/inventories/..gitkeep
+!/ansible/inventories/.gitkeep
